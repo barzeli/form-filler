@@ -34,15 +34,10 @@ google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/remote-profile
 2. Run the filler with extraction enabled. The script will search for an open tab with `web.whatsapp.com`, extract the last message using a few common selectors, and paste it into the first textarea it finds in the form:
 
 ```bash
-CONNECT_CDP="http://127.0.0.1:9222" bun run start
+bun run start
 ```
 
 The script will look for a URL inside the extracted message and, if it finds one, will open that URL. The script prefers Google Forms links (`docs.google.com/forms`) when multiple URLs appear in the message — this lets you "share" a form link in WhatsApp and have the filler follow it automatically.
-
-Optional env vars:
-
-- `WHATSAPP_SELECTOR` — a CSS selector to precisely target the message element if defaults don't find it.
-- `CONNECT_CDP` — URL for the remote debugging endpoint (default: http://127.0.0.1:9222 when set).
 
 If the script can't locate WhatsApp or the message, it will log a warning and continue filling other fields.
 
