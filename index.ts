@@ -28,27 +28,66 @@ async function findWhatsAppPage(browser: Browser) {
 
 async function extractWhatsAppLineFromPage(whatsAppPage: Page) {
   if (!whatsAppPage) return null;
-  const trySelectors = [
-    'div[data-testid="msg-text"]',
-    'div.copyable-text span[dir="ltr"]',
-    'span[dir="ltr"]',
-    "div.message-out span",
-    "div.message-in span",
-  ];
 
-  for (const sel of trySelectors) {
-    try {
-      const locator = whatsAppPage.locator(sel);
-      const count = await locator.count();
-      if (count > 0) {
-        const text = await locator.nth(count - 1).innerText();
-        if (text && text.trim().length > 0) return text.trim();
+  // We primarily rely on messages with 'data-pre-plain-text' to verify the timestamp
+  const messages = whatsAppPage.locator('div[data-pre-plain-text]');
+  const count = await messages.count();
+
+  if (count === 0) {
+    // Fallback: If no metadata found, we can't verify date.
+    // Assuming strict mode requested ("only take... if sent today"), we should probably return null?
+    // Or we fall back to existing logic but warn?
+    // Let's stick to the existing logic as a fallback but with a warning,
+    // or return null to be safe. Let's return null to be strict.
+    console.log("No messages with timestamp metadata found.");
+    return null;
+  }
+
+  // Check the last message
+  const lastMsg = messages.nth(count - 1);
+  const rawPrePlainText = await lastMsg.getAttribute("data-pre-plain-text");
+  // format example: [21:55, 6/1/2026] Name:
+  if (rawPrePlainText) {
+    const match = rawPrePlainText.match(/\[.*?, (.*?)\]/);
+    if (match) {
+      const msgDateStr = match[1];
+      if (msgDateStr && isDateToday(msgDateStr)) {
+        // It's today! Get the text.
+        // The text is usually in a child span[dir="ltr"] or just innerText
+        const text = await lastMsg.innerText();
+        return text.trim();
+      } else {
+        console.log(`Ignoring message from ${msgDateStr} (not today)`);
+        return null; // Stop processing this message
       }
-    } catch (e) {
-      // ignore selector errors
     }
   }
+
   return null;
+}
+
+function isDateToday(dateStr: string) {
+  const today = new Date();
+  const currentDay = today.getDate();
+  const currentMonth = today.getMonth() + 1;
+  const currentYear = today.getFullYear();
+
+  // Normalize separators
+  const parts = dateStr.replace(/,/g, "").split("/");
+  if (parts.length !== 3) return false;
+
+  const firstPart = parseInt(parts[0]!, 10);
+  const secondPart = parseInt(parts[1]!, 10);
+  const yearPart = parseInt(parts[2]!, 10);
+
+  // Check year (4 digits or 2 digits)
+  if (yearPart !== currentYear && yearPart !== currentYear % 100) return false;
+
+  // Check DD/MM or MM/DD match
+  const isDMY = firstPart === currentDay && secondPart === currentMonth;
+  const isMDY = firstPart === currentMonth && secondPart === currentDay;
+
+  return isDMY || isMDY;
 }
 
 /**
@@ -73,13 +112,9 @@ function extractUrlFromText(text: string | null): string | null {
  */
 async function waitForWhatsAppPage(browser: Browser) {
   console.log("Looking for WhatsApp page...");
-  let whatsAppPage = null;
-  while (!whatsAppPage) {
-    whatsAppPage = await findWhatsAppPage(browser);
-    if (!whatsAppPage) {
-      console.log("WhatsApp page not found. Retrying in 1 minute...");
-      await new Promise((resolve) => setTimeout(resolve, 60000));
-    }
+  let whatsAppPage = await findWhatsAppPage(browser);
+  if (!whatsAppPage) {
+    throw new Error("WhatsApp page not found. Retrying in 1 minute...");
   }
   console.log("Found WhatsApp page");
   return whatsAppPage;
@@ -119,27 +154,7 @@ async function waitForFormUrlInMessage(browser: Browser, initialwhatsAppPage: Pa
   return formUrl;
 }
 
-async function run() {
-  const browser = await connectToChrome();
-
-  const whatsAppPage = await waitForWhatsAppPage(browser);
-  const formUrl = await waitForFormUrlInMessage(browser, whatsAppPage);
-
-  if (formUrl) {
-    console.log("Found form URL in WhatsApp message: ", formUrl);
-  } else {
-    throw new Error(
-      "No form URL provided. Include a URL in the WhatsApp message."
-    );
-  }
-
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await page.goto(formUrl, { waitUntil: "load" });
-  await page.waitForLoadState("domcontentloaded")
-
-  await page.waitForTimeout(10000)
-
+async function fillForm(page: Page) {
   // Fill text boxes (name, email, phone)
   const textboxes = page.getByRole("textbox");
   try {
@@ -169,31 +184,57 @@ async function run() {
     const byText = page.locator(`text=${DATA.time}`);
     if ((await byText.count()) > 0) await byText.first().click();
   }
+}
 
-  await page.screenshot({ path: "screenshots/form.png", fullPage: true });
-
+async function submitForm(page: Page) {
   // Click the submit button
   // Try finding button by exact or partial text matches using a regex
   const submit = page.getByRole("button", { name: /שליחה|שלח|Submit|Send/i });
-  try {
-    if ((await submit.count()) > 0) {
-      await submit.first().click();
+  if ((await submit.count()) > 0) {
+    await submit.first().click();
+  } else {
+    // Fallback: looking for specific class structures common in Google Forms (e.g., 'span' with text)
+    const spanSubmit = page
+      .locator('div[role="button"] span')
+      .filter({ hasText: /שליחה|שלח|Submit|Send/i });
+    if ((await spanSubmit.count()) > 0) {
+      await spanSubmit.first().click();
     } else {
-      // Fallback: looking for specific class structures common in Google Forms (e.g., 'span' with text)
-      const spanSubmit = page.locator('div[role="button"] span').filter({ hasText: /שליחה|שלח|Submit|Send/i });
-      if ((await spanSubmit.count()) > 0) {
-        await spanSubmit.first().click();
-      } else {
-        // Last resort: input type submit
-        const inputSubmit = page.locator('input[type="submit"]');
-        if ((await inputSubmit.count()) > 0) await inputSubmit.first().click();
-      }
+      // Last resort: input type submit
+      const inputSubmit = page.locator('input[type="submit"]');
+      if ((await inputSubmit.count()) > 0) await inputSubmit.first().click();
     }
-  } catch (e) {
-    console.warn("Could not click submit button:", e);
+  }
+}
+
+async function run() {
+  const browser = await connectToChrome();
+
+  const whatsAppPage = await waitForWhatsAppPage(browser);
+  const formUrl = await waitForFormUrlInMessage(browser, whatsAppPage);
+
+  if (formUrl) {
+    console.log("Found form URL in WhatsApp message: ", formUrl);
+  } else {
+    throw new Error(
+      "No form URL provided. Include a URL in the WhatsApp message."
+    );
   }
 
-  await page.waitForLoadState("domcontentloaded")
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(formUrl, { waitUntil: "load" });
+  await page.waitForLoadState("domcontentloaded");
+
+  await page.waitForTimeout(10000);
+
+  await fillForm(page);
+
+  await page.screenshot({ path: "screenshots/form.png", fullPage: true });
+
+  await submitForm(page);
+
+  await page.waitForLoadState("domcontentloaded");
   await page.screenshot({ path: "screenshots/submission.png", fullPage: true });
 
   await browser.close();
