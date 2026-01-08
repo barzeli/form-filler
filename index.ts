@@ -73,8 +73,8 @@ function isDateToday(dateStr: string) {
   const currentMonth = today.getMonth() + 1;
   const currentYear = today.getFullYear();
 
-  // Normalize separators
-  const parts = dateStr.replace(/,/g, "").split("/");
+  // Normalize separators: remove commas, replace dots/slashes with something common or split by regex
+  const parts = dateStr.replace(/,/g, "").split(/[./]/);
   if (parts.length !== 3) return false;
 
   const firstPart = parseInt(parts[0]!, 10);
@@ -115,9 +115,9 @@ async function waitForFormUrlInMessage(whatsAppPage: Page) {
         return extractUrlFromText(whatsappLine);
       } else {
         console.log(
-          "No form URL found in last message. Checking again in 15 seconds..."
+          "No form URL found in last message. Checking again in 5 seconds..."
         );
-        await new Promise((resolve) => setTimeout(resolve, 15000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
       }
     } catch (e) {
       console.error("Error during message check:", e);
@@ -202,8 +202,10 @@ async function run() {
   await new Promise((resolve) => setTimeout(resolve, 3000));
 
   const browser = await connectToChrome();
-  const whatsAppPage = browser.contexts()[0]!.pages()[0]!;
+  const context = browser.contexts()[0]!
+  const whatsAppPage = context.pages()[0]!;
   await whatsAppPage.goto("https://web.whatsapp.com", { waitUntil: "domcontentloaded" });
+  await whatsAppPage.locator('span', { hasText: "(את/ה)" }).click()
 
   // const whatsAppPage = await findWhatsAppPage(browser);
   // if (!whatsAppPage) {
@@ -220,19 +222,18 @@ async function run() {
     );
   }
 
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await page.goto(formUrl, { waitUntil: "load" });
-  await page.waitForLoadState("domcontentloaded");
+  const formPage = await context.newPage();
+  await formPage.goto(formUrl, { waitUntil: "load" });
+  await formPage.waitForLoadState("domcontentloaded");
 
-  await fillForm(page);
+  await fillForm(formPage);
 
-  await page.screenshot({ path: "screenshots/form.png", fullPage: true });
+  await formPage.screenshot({ path: "screenshots/form.png", fullPage: true });
 
-  await submitForm(page);
+  await submitForm(formPage);
 
-  await page.waitForLoadState("domcontentloaded");
-  await page.screenshot({ path: "screenshots/submission.png", fullPage: true });
+  await formPage.waitForLoadState("domcontentloaded");
+  await formPage.screenshot({ path: "screenshots/submission.png", fullPage: true });
 
   await browser.close();
   console.log("Form submitted (screenshot: screenshots/submission.png)");
