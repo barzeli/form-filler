@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, type Page } from "playwright";
 
 const DATA = {
   name: process.env.NAME || "",
@@ -7,6 +7,25 @@ const DATA = {
   phone: process.env.PHONE || "",
   time: process.env.TIME || "",
 };
+
+function launchChrome() {
+  console.log("Launching Chrome...");
+  // Launch Chrome with remote debugging and a persistent profile
+  const chromeProcess = spawn(
+    "/opt/google/chrome/chrome",
+    [
+      "--remote-debugging-port=9222",
+      "--user-data-dir=/tmp/remote-profile-clean",
+      "--no-first-run",
+      "--no-default-browser-check"
+    ],
+    {
+      detached: true,
+      stdio: "ignore",
+    }
+  );
+  chromeProcess.unref();
+}
 
 async function connectToChrome() {
   return await chromium.connectOverCDP(
@@ -17,29 +36,36 @@ async function connectToChrome() {
   );
 }
 
-async function findWhatsAppPage(browser: Browser) {
-  for (const ctx of browser.contexts()) {
-    for (const page of ctx.pages()) {
-      const url = page.url();
-      if (url && url.includes("web.whatsapp.com")) return page;
-    }
-  }
-  return null;
+function isDateToday(dateStr: string) {
+  const today = new Date();
+  const currentDay = today.getDate();
+  const currentMonth = today.getMonth() + 1;
+  const currentYear = today.getFullYear();
+
+  // Normalize separators: remove commas, replace dots/slashes with something common or split by regex
+  const parts = dateStr.replace(/,/g, "").split(/[./]/);
+  if (parts.length !== 3) return false;
+
+  const firstPart = parseInt(parts[0]!, 10);
+  const secondPart = parseInt(parts[1]!, 10);
+  const yearPart = parseInt(parts[2]!, 10);
+
+  // Check year (4 digits or 2 digits)
+  if (yearPart !== currentYear && yearPart !== currentYear % 100) return false;
+
+  // Check DD/MM or MM/DD match
+  const isDMY = firstPart === currentDay && secondPart === currentMonth;
+  const isMDY = firstPart === currentMonth && secondPart === currentDay;
+
+  return isDMY || isMDY;
 }
 
-async function extractWhatsAppLineFromPage(whatsAppPage: Page) {
-  if (!whatsAppPage) return null;
-
+async function extractMessageText(whatsAppPage: Page) {
   // We primarily rely on messages with 'data-pre-plain-text' to verify the timestamp
   const messages = whatsAppPage.locator('div[data-pre-plain-text]');
   const count = await messages.count();
 
   if (count === 0) {
-    // Fallback: If no metadata found, we can't verify date.
-    // Assuming strict mode requested ("only take... if sent today"), we should probably return null?
-    // Or we fall back to existing logic but warn?
-    // Let's stick to the existing logic as a fallback but with a warning,
-    // or return null to be safe. Let's return null to be strict.
     console.log("No messages with timestamp metadata found.");
     return null;
   }
@@ -67,33 +93,7 @@ async function extractWhatsAppLineFromPage(whatsAppPage: Page) {
   return null;
 }
 
-function isDateToday(dateStr: string) {
-  const today = new Date();
-  const currentDay = today.getDate();
-  const currentMonth = today.getMonth() + 1;
-  const currentYear = today.getFullYear();
-
-  // Normalize separators: remove commas, replace dots/slashes with something common or split by regex
-  const parts = dateStr.replace(/,/g, "").split(/[./]/);
-  if (parts.length !== 3) return false;
-
-  const firstPart = parseInt(parts[0]!, 10);
-  const secondPart = parseInt(parts[1]!, 10);
-  const yearPart = parseInt(parts[2]!, 10);
-
-  // Check year (4 digits or 2 digits)
-  if (yearPart !== currentYear && yearPart !== currentYear % 100) return false;
-
-  // Check DD/MM or MM/DD match
-  const isDMY = firstPart === currentDay && secondPart === currentMonth;
-  const isMDY = firstPart === currentMonth && secondPart === currentDay;
-
-  return isDMY || isMDY;
-}
-
-/**
- * Extract a URL from a text blob. Prefer Google Forms links when present.
- */
+// Extract a URL from a text blob. Prefer Google Forms links when present.
 function extractUrlFromText(text: string | null): string | null {
   if (!text) return null;
   const urls = text.match(/https?:\/\/[^\s)"']+/g);
@@ -103,16 +103,13 @@ function extractUrlFromText(text: string | null): string | null {
   return formUrl || null;
 }
 
-/**
- * Continuously checks the WhatsApp page for a form URL in the latest message.
- * Handles page closure recovery by calling waitForWhatsAppPage again if needed.
- */
+// Continuously checks the WhatsApp page for a form URL in the latest message.
 async function waitForFormUrlInMessage(whatsAppPage: Page) {
   while (true) {
     try {
-      const whatsappLine = await extractWhatsAppLineFromPage(whatsAppPage);
-      if (whatsappLine) {
-        return extractUrlFromText(whatsappLine);
+      const messageText = await extractMessageText(whatsAppPage);
+      if (messageText) {
+        return extractUrlFromText(messageText);
       } else {
         console.log(
           "No form URL found in last message. Checking again in 5 seconds..."
@@ -180,22 +177,7 @@ async function submitForm(page: Page) {
 }
 
 async function run() {
-  console.log("Launching Chrome...");
-  // Launch Chrome with remote debugging and a persistent profile
-  const chromeProcess = spawn(
-    "/opt/google/chrome/chrome",
-    [
-      "--remote-debugging-port=9222",
-      "--user-data-dir=/tmp/remote-profile-clean",
-      "--no-first-run",
-      "--no-default-browser-check"
-    ],
-    {
-      detached: true,
-      stdio: "ignore",
-    }
-  );
-  chromeProcess.unref();
+  launchChrome()
 
   // Wait for Chrome to start
   console.log("Waiting for Chrome to become available...");
@@ -207,19 +189,12 @@ async function run() {
   await whatsAppPage.goto("https://web.whatsapp.com", { waitUntil: "domcontentloaded" });
   await whatsAppPage.locator('span', { hasText: "(את/ה)" }).click()
 
-  // const whatsAppPage = await findWhatsAppPage(browser);
-  // if (!whatsAppPage) {
-  //   throw new Error("WhatsApp page not found. Retrying in 1 minute...");
-  // }
-
   const formUrl = await waitForFormUrlInMessage(whatsAppPage);
 
   if (formUrl) {
     console.log("Found form URL in WhatsApp message: ", formUrl);
   } else {
-    throw new Error(
-      "No form URL provided. Include a URL in the WhatsApp message."
-    );
+    throw new Error("No form URL provided. Include a URL in the WhatsApp message.");
   }
 
   const formPage = await context.newPage();
