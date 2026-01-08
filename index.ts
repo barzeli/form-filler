@@ -1,3 +1,4 @@
+import { spawn } from "child_process";
 import { chromium, type Browser, type Page } from "playwright";
 
 const DATA = {
@@ -103,55 +104,26 @@ function extractUrlFromText(text: string | null): string | null {
 }
 
 /**
- * Collect WhatsApp info from an open WhatsApp Web tab in the connected browser.
- * Returns the extracted line and a detected form URL (if any).
- */
-/**
- * Continuously polls for the WhatsApp Web tab.
- * Retries every minute if not found.
- */
-async function waitForWhatsAppPage(browser: Browser) {
-  console.log("Looking for WhatsApp page...");
-  let whatsAppPage = await findWhatsAppPage(browser);
-  if (!whatsAppPage) {
-    throw new Error("WhatsApp page not found. Retrying in 1 minute...");
-  }
-  console.log("Found WhatsApp page");
-  return whatsAppPage;
-}
-
-/**
  * Continuously checks the WhatsApp page for a form URL in the latest message.
  * Handles page closure recovery by calling waitForWhatsAppPage again if needed.
  */
-async function waitForFormUrlInMessage(browser: Browser, initialwhatsAppPage: Page) {
-  let whatsAppPage = initialwhatsAppPage;
-  let formUrl: string | null = null;
-
-  while (!formUrl) {
+async function waitForFormUrlInMessage(whatsAppPage: Page) {
+  while (true) {
     try {
-      if (whatsAppPage.isClosed()) {
-        console.log("WhatsApp page was closed. Re-scanning...");
-        whatsAppPage = await waitForWhatsAppPage(browser);
-      }
-
       const whatsappLine = await extractWhatsAppLineFromPage(whatsAppPage);
       if (whatsappLine) {
-        formUrl = extractUrlFromText(whatsappLine);
-      }
-
-      if (!formUrl) {
+        return extractUrlFromText(whatsappLine);
+      } else {
         console.log(
-          "No form URL found in last message. Checking again in 1 minute..."
+          "No form URL found in last message. Checking again in 15 seconds..."
         );
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, 15000));
       }
     } catch (e) {
       console.error("Error during message check:", e);
       await new Promise((resolve) => setTimeout(resolve, 5000));
     }
   }
-  return formUrl;
 }
 
 async function fillForm(page: Page) {
@@ -208,10 +180,37 @@ async function submitForm(page: Page) {
 }
 
 async function run() {
-  const browser = await connectToChrome();
+  console.log("Launching Chrome...");
+  // Launch Chrome with remote debugging and a persistent profile
+  const chromeProcess = spawn(
+    "/opt/google/chrome/chrome",
+    [
+      "--remote-debugging-port=9222",
+      "--user-data-dir=/tmp/remote-profile-clean",
+      "--no-first-run",
+      "--no-default-browser-check"
+    ],
+    {
+      detached: true,
+      stdio: "ignore",
+    }
+  );
+  chromeProcess.unref();
 
-  const whatsAppPage = await waitForWhatsAppPage(browser);
-  const formUrl = await waitForFormUrlInMessage(browser, whatsAppPage);
+  // Wait for Chrome to start
+  console.log("Waiting for Chrome to become available...");
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+
+  const browser = await connectToChrome();
+  const whatsAppPage = browser.contexts()[0]!.pages()[0]!;
+  await whatsAppPage.goto("https://web.whatsapp.com", { waitUntil: "domcontentloaded" });
+
+  // const whatsAppPage = await findWhatsAppPage(browser);
+  // if (!whatsAppPage) {
+  //   throw new Error("WhatsApp page not found. Retrying in 1 minute...");
+  // }
+
+  const formUrl = await waitForFormUrlInMessage(whatsAppPage);
 
   if (formUrl) {
     console.log("Found form URL in WhatsApp message: ", formUrl);
@@ -225,8 +224,6 @@ async function run() {
   const page = await context.newPage();
   await page.goto(formUrl, { waitUntil: "load" });
   await page.waitForLoadState("domcontentloaded");
-
-  await page.waitForTimeout(10000);
 
   await fillForm(page);
 
