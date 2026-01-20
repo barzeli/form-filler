@@ -17,7 +17,7 @@ function launchChrome() {
       "--remote-debugging-port=9222",
       "--user-data-dir=/tmp/remote-profile-clean",
       "--no-first-run",
-      "--no-default-browser-check"
+      "--no-default-browser-check",
     ],
     {
       detached: true,
@@ -28,12 +28,9 @@ function launchChrome() {
 }
 
 async function connectToChrome() {
-  return await chromium.connectOverCDP(
-    "http://127.0.0.1:9222",
-    {
-      timeout: 30000,
-    }
-  );
+  return await chromium.connectOverCDP("http://127.0.0.1:9222", {
+    timeout: 30000,
+  });
 }
 
 function isDateToday(dateStr: string) {
@@ -62,7 +59,7 @@ function isDateToday(dateStr: string) {
 
 async function extractMessageText(whatsAppPage: Page) {
   // We primarily rely on messages with 'data-pre-plain-text' to verify the timestamp
-  const messages = whatsAppPage.locator('div[data-pre-plain-text]');
+  const messages = whatsAppPage.locator("div[data-pre-plain-text]");
   const count = await messages.count();
 
   if (count === 0) {
@@ -109,11 +106,16 @@ async function waitForFormUrlInMessage(whatsAppPage: Page) {
     try {
       const messageText = await extractMessageText(whatsAppPage);
       if (messageText) {
-        return extractUrlFromText(messageText);
+        const formUrl = extractUrlFromText(messageText);
+        if (formUrl) return formUrl;
+        else {
+          console.log(
+            "No form URL found in last message. Checking again in 5 seconds..."
+          );
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
       } else {
-        console.log(
-          "No form URL found in last message. Checking again in 5 seconds..."
-        );
+        console.log("No valid message found. Checking again in 5 seconds...");
         await new Promise((resolve) => setTimeout(resolve, 5000));
       }
     } catch (e) {
@@ -177,24 +179,47 @@ async function submitForm(page: Page) {
 }
 
 async function run() {
-  launchChrome()
+  const targetHour = 7;
+  const targetMinute = 58;
+
+  const now = new Date();
+  let targetTime = new Date(now);
+  targetTime.setHours(targetHour, targetMinute, 0, 0);
+
+  // If the target time has already passed today, schedule for tomorrow
+  if (now > targetTime) {
+    targetTime.setDate(targetTime.getDate() + 1);
+  }
+
+  const msUntilTarget = targetTime.getTime() - now.getTime();
+  console.log(`Waiting until ${targetTime.toLocaleString()} to start...`);
+
+  if (msUntilTarget > 0) {
+    await new Promise((resolve) => setTimeout(resolve, msUntilTarget));
+  }
+
+  launchChrome();
 
   // Wait for Chrome to start
   console.log("Waiting for Chrome to become available...");
   await new Promise((resolve) => setTimeout(resolve, 3000));
 
   const browser = await connectToChrome();
-  const context = browser.contexts()[0]!
+  const context = browser.contexts()[0]!;
   const whatsAppPage = context.pages()[0]!;
-  await whatsAppPage.goto("https://web.whatsapp.com", { waitUntil: "domcontentloaded" });
-  await whatsAppPage.locator('span', { hasText: "(את/ה)" }).click()
+  await whatsAppPage.goto("https://web.whatsapp.com", {
+    waitUntil: "domcontentloaded",
+  });
+  await whatsAppPage.locator("span", { hasText: "קבוצת הפאדל של" }).click();
 
   const formUrl = await waitForFormUrlInMessage(whatsAppPage);
 
   if (formUrl) {
     console.log("Found form URL in WhatsApp message: ", formUrl);
   } else {
-    throw new Error("No form URL provided. Include a URL in the WhatsApp message.");
+    throw new Error(
+      "No form URL provided. Include a URL in the WhatsApp message."
+    );
   }
 
   const formPage = await context.newPage();
@@ -208,7 +233,10 @@ async function run() {
   await submitForm(formPage);
 
   await formPage.waitForLoadState("domcontentloaded");
-  await formPage.screenshot({ path: "screenshots/submission.png", fullPage: true });
+  await formPage.screenshot({
+    path: "screenshots/submission.png",
+    fullPage: true,
+  });
 
   await browser.close();
   console.log("Form submitted (screenshot: screenshots/submission.png)");
