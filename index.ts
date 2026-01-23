@@ -1,4 +1,3 @@
-import { spawn } from "child_process";
 import { chromium, type Page } from "playwright";
 
 const DATA = {
@@ -7,31 +6,6 @@ const DATA = {
   phone: process.env.PHONE || "",
   time: process.env.TIME || "",
 };
-
-function launchChrome() {
-  console.log("Launching Chrome...");
-  // Launch Chrome with remote debugging and a persistent profile
-  const chromeProcess = spawn(
-    "/opt/google/chrome/chrome",
-    [
-      "--remote-debugging-port=9222",
-      "--user-data-dir=/tmp/remote-profile-clean",
-      "--no-first-run",
-      "--no-default-browser-check",
-    ],
-    {
-      detached: true,
-      stdio: "ignore",
-    }
-  );
-  chromeProcess.unref();
-}
-
-async function connectToChrome() {
-  return await chromium.connectOverCDP("http://127.0.0.1:9222", {
-    timeout: 30000,
-  });
-}
 
 function isDateToday(dateStr: string) {
   const today = new Date();
@@ -110,7 +84,7 @@ async function waitForFormUrlInMessage(whatsAppPage: Page) {
         if (formUrl) return formUrl;
         else {
           console.log(
-            "No form URL found in last message. Checking again in 5 seconds..."
+            "No form URL found in last message. Checking again in 5 seconds...",
           );
           await new Promise((resolve) => setTimeout(resolve, 5000));
         }
@@ -134,10 +108,10 @@ async function fillForm(page: Page) {
     await textboxes.nth(2).fill(DATA.phone);
   } catch (err) {
     console.warn(
-      "Failed to fill textboxes with role selectors, trying input[type=text] fallback"
+      "Failed to fill textboxes with role selectors, trying input[type=text] fallback",
     );
     const inputs = page.locator(
-      'input[type="text"], input[type="email"], input[type="tel"]'
+      'input[type="text"], input[type="email"], input[type="tel"]',
     );
     if ((await inputs.count()) >= 3) {
       await inputs.nth(0).fill(DATA.name);
@@ -198,15 +172,13 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, msUntilTarget));
   }
 
-  launchChrome();
-
-  // Wait for Chrome to start
-  console.log("Waiting for Chrome to become available...");
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-
-  const browser = await connectToChrome();
-  const context = browser.contexts()[0]!;
-  const whatsAppPage = context.pages()[0]!;
+  const browser = await chromium.launchPersistentContext(
+    "/tmp/remote-profile-clean",
+    {
+      headless: false,
+    },
+  );
+  const whatsAppPage = await browser.newPage();
   await whatsAppPage.goto("https://web.whatsapp.com", {
     waitUntil: "domcontentloaded",
   });
@@ -218,11 +190,11 @@ async function run() {
     console.log("Found form URL in WhatsApp message: ", formUrl);
   } else {
     throw new Error(
-      "No form URL provided. Include a URL in the WhatsApp message."
+      "No form URL provided. Include a URL in the WhatsApp message.",
     );
   }
 
-  const formPage = await context.newPage();
+  const formPage = await browser.newPage();
   await formPage.goto(formUrl, { waitUntil: "load" });
   await formPage.waitForLoadState("domcontentloaded");
 
