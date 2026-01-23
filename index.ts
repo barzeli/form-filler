@@ -1,3 +1,5 @@
+import { tmpdir } from "os";
+import { join } from "path";
 import { chromium, type Page } from "playwright";
 
 const DATA = {
@@ -172,12 +174,9 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, msUntilTarget));
   }
 
-  const browser = await chromium.launchPersistentContext(
-    "/tmp/remote-profile-clean",
-    {
-      headless: false,
-    },
-  );
+  const userDataDir = join(tmpdir(), "remote-profile-clean");
+
+  const browser = await chromium.launchPersistentContext(userDataDir);
   const whatsAppPage = await browser.newPage();
   await whatsAppPage.goto("https://web.whatsapp.com", {
     waitUntil: "domcontentloaded",
