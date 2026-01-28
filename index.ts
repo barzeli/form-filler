@@ -154,7 +154,7 @@ async function submitForm(page: Page) {
   }
 }
 
-async function run() {
+async function run(isTest: boolean) {
   const targetHour = 7;
   const targetMinute = 58;
 
@@ -170,13 +170,15 @@ async function run() {
   const msUntilTarget = targetTime.getTime() - now.getTime();
   console.log(`Waiting until ${targetTime.toLocaleString()} to start...`);
 
-  if (msUntilTarget > 0) {
+  if (msUntilTarget > 0 && !isTest) {
     await new Promise((resolve) => setTimeout(resolve, msUntilTarget));
   }
 
   const userDataDir = join(tmpdir(), "remote-profile-clean");
 
-  const browser = await chromium.launchPersistentContext(userDataDir);
+  const browser = await chromium.launchPersistentContext(userDataDir, {
+    headless: false,
+  });
   const whatsAppPage = await browser.newPage();
   await whatsAppPage.goto("https://web.whatsapp.com", {
     waitUntil: "domcontentloaded",
@@ -213,7 +215,8 @@ async function run() {
   console.log("Form submitted (screenshot: screenshots/submission.png)");
 }
 
-run().catch((err) => {
+const isTest = process.argv[2] === "test";
+run(isTest).catch((err) => {
   console.error(err);
   process.exit(1);
 });
