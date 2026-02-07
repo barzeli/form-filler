@@ -154,6 +154,33 @@ async function submitForm(page: Page) {
   }
 }
 
+async function sendWhatsAppMessage(whatsAppPage: Page, message: string) {
+  try {
+    // Find the message input field in WhatsApp
+    const messageInput = whatsAppPage.locator(
+      'div[contenteditable="true"][data-tab="10"]',
+    );
+    if ((await messageInput.count()) > 0) {
+      await messageInput.click();
+      await messageInput.type(message);
+    } else {
+      console.warn(
+        "Could not find WhatsApp message input field. Trying alternative selector...",
+      );
+      const altInput = whatsAppPage
+        .locator('div[contenteditable="true"]')
+        .last();
+      await altInput.click();
+      await altInput.type(message);
+    }
+    await whatsAppPage.keyboard.press("Enter");
+    await whatsAppPage.waitForTimeout(2000); // Wait a bit to ensure the message is sent
+    console.log(`WhatsApp message sent: "${message}"`);
+  } catch (err) {
+    console.warn("Failed to send WhatsApp message:", err);
+  }
+}
+
 async function run(isTest: boolean) {
   const targetHour = 7;
   const targetMinute = 58;
@@ -210,9 +237,12 @@ async function run(isTest: boolean) {
     path: "screenshots/submission.png",
     fullPage: true,
   });
+  console.log("Form submitted (screenshot: screenshots/submission.png)");
+
+  await whatsAppPage.locator("span", { hasText: "(את/ה)" }).click();
+  await sendWhatsAppMessage(whatsAppPage, "✓");
 
   await browser.close();
-  console.log("Form submitted (screenshot: screenshots/submission.png)");
 }
 
 const isTest = process.argv[2] === "test";
