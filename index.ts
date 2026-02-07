@@ -204,8 +204,11 @@ async function run(isTest: boolean) {
   const userDataDir = join(tmpdir(), "remote-profile-clean");
 
   const browser = await chromium.launchPersistentContext(userDataDir, {
-    headless: false,
+    headless: !isTest,
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
   });
+
   const whatsAppPage = await browser.newPage();
   await whatsAppPage.goto("https://web.whatsapp.com", {
     waitUntil: "domcontentloaded",
