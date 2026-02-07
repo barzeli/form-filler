@@ -105,9 +105,11 @@ async function fillForm(page: Page) {
   // Fill text boxes (name, email, phone)
   const textboxes = page.getByRole("textbox");
   try {
-    await textboxes.nth(0).fill(DATA.name);
-    await textboxes.nth(1).fill(DATA.email);
-    await textboxes.nth(2).fill(DATA.phone);
+    if ((await textboxes.count()) >= 3) {
+      await textboxes.nth(0).fill(DATA.name);
+      await textboxes.nth(1).fill(DATA.email);
+      await textboxes.nth(2).fill(DATA.phone);
+    }
   } catch (err) {
     console.warn(
       "Failed to fill textboxes with role selectors, trying input[type=text] fallback",
@@ -174,7 +176,7 @@ async function sendWhatsAppMessage(whatsAppPage: Page, message: string) {
       await altInput.type(message);
     }
     await whatsAppPage.keyboard.press("Enter");
-    await whatsAppPage.waitForTimeout(2000); // Wait a bit to ensure the message is sent
+    await whatsAppPage.waitForTimeout(5000); // Wait a bit to ensure the message is sent
     console.log(`WhatsApp message sent: "${message}"`);
   } catch (err) {
     console.warn("Failed to send WhatsApp message:", err);
@@ -242,7 +244,7 @@ async function run(isTest: boolean) {
   });
   console.log("Form submitted (screenshot: screenshots/submission.png)");
 
-  await whatsAppPage.locator("span", { hasText: "(את/ה)" }).click();
+  await whatsAppPage.locator("span", { hasText: /\(את\/ה\)|You/i }).click();
   await sendWhatsAppMessage(whatsAppPage, "✓");
 
   await browser.close();
